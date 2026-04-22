@@ -165,24 +165,6 @@ jobs:
           set -euo pipefail
           kubectl -n "${K8S_NAMESPACE}" rollout status deployment/"${K8S_DEPLOYMENT_NAME}" --timeout=5m
 
-      # Roll back release only when deployment/rollout steps fail.
-      - name: Rollback Helm release on failure
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail
-          history_json="$(helm history "${HELM_RELEASE_NAME}" -n "${K8S_NAMESPACE}" -o json || true)"
-          if [ -z "${history_json}" ] || [ "${history_json}" = "[]" ]; then
-            echo "No release history found; cannot rollback."
-            exit 1
-          fi
-          previous_revision="$(echo "${history_json}" | jq -r '.[-2].revision // empty')"
-          if [ -z "${previous_revision}" ]; then
-            echo "No previous revision available; cannot rollback."
-            exit 1
-          fi
-          helm rollback "${HELM_RELEASE_NAME}" "${previous_revision}" -n "${K8S_NAMESPACE}" --wait --timeout 5m
-
       # Smoke test service endpoint through port-forward with retries.
       - name: Smoke test /healthz
         shell: bash
@@ -210,3 +192,21 @@ jobs:
             cat /tmp/port-forward.log
             exit 1
           fi
+
+      # Roll back release when any deployment, rollout, or smoke-test step fails.
+      - name: Rollback Helm release on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          history_json="$(helm history "${HELM_RELEASE_NAME}" -n "${K8S_NAMESPACE}" -o json || true)"
+          if [ -z "${history_json}" ] || [ "${history_json}" = "[]" ]; then
+            echo "No release history found; cannot rollback."
+            exit 1
+          fi
+          previous_revision="$(echo "${history_json}" | jq -r '.[-2].revision // empty')"
+          if [ -z "${previous_revision}" ]; then
+            echo "No previous revision available; cannot rollback."
+            exit 1
+          fi
+          helm rollback "${HELM_RELEASE_NAME}" "${previous_revision}" -n "${K8S_NAMESPACE}" --wait --timeout 5m

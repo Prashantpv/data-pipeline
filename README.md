@@ -118,6 +118,10 @@ Set required GitHub configuration:
   - `K8S_DEPLOYMENT_NAME`
   - `K8S_SERVICE_NAME`
 
+Before rerunning the deployment workflow, verify that all of the secrets,
+variables, and the self-hosted runner are configured in GitHub repository
+settings. The workflow will fail early if any required setting is missing.
+
 Then push to `main` (or manually run workflow) to:
 
 - build image
