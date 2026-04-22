@@ -1,0 +1,57 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: data-pipeline-sli
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: data-pipeline-sli
+spec:
+  groups:
+    - name: data-pipeline-sli-rules
+      rules:
+        # Availability SLI rule for operator-based Prometheus stacks.
+        - alert: DataPipelineAvailabilitySLIBreached
+          expr: |
+            (
+              sum(rate(http_requests_total{path=~"/healthz|/process",status!~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{path=~"/healthz|/process"}[5m]))
+            ) < 0.99
+          for: 5m
+          labels:
+            severity: warning
+            sli: availability
+          annotations:
+            summary: "Data pipeline availability SLI below 99%"
+            description: "Availability over 5m is below target (99%)."
+
+        # Latency SLI using p95 request duration threshold.
+        - alert: DataPipelineLatencyP95High
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(http_request_duration_seconds_bucket{path=~"/healthz|/process"}[5m])) by (le)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            sli: latency
+          annotations:
+            summary: "Data pipeline p95 latency above 500ms"
+            description: "p95 latency over 5m exceeded 500ms."
+
+        # Error-rate SLI for HTTP 5xx responses.
+        - alert: DataPipelineErrorRateHigh
+          expr: |
+            (
+              sum(rate(http_requests_total{path=~"/healthz|/process",status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{path=~"/healthz|/process"}[5m]))
+            ) > 0.01
+          for: 5m
+          labels:
+            severity: critical
+            sli: error-rate
+          annotations:
+            summary: "Data pipeline 5xx error rate above 1%"
+            description: "5xx ratio over 5m exceeded 1%."

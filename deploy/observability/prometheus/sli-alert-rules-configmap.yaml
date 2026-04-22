@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-pipeline-sli-alerts
+  namespace: observability
+data:
+  recording_and_alerting_rules.yml: |
+    groups:
+      - name: data-pipeline-sli-alerts
+        rules:
+          # Availability SLI: over a short window, keep successful responses >= 99%.
+          # Uses non-5xx responses as "successful".
+          - alert: DataPipelineAvailabilitySLIBreached
+            expr: |
+              (
+                sum(rate(http_requests_total{job="kubernetes-pods-annotated",path=~"/healthz|/process",status!~"5.."}[5m]))
+                /
+                sum(rate(http_requests_total{job="kubernetes-pods-annotated",path=~"/healthz|/process"}[5m]))
+              ) < 0.99
+            for: 5m
+            labels:
+              severity: warning
+              sli: availability
+            annotations:
+              summary: "Data pipeline availability SLI below 99%"
+              description: "Availability over 5m is below target (99%)."
+
+          # Latency SLI: p95 latency should stay under 500ms for user-facing endpoints.
+          - alert: DataPipelineLatencyP95High
+            expr: |
+              histogram_quantile(
+                0.95,
+                sum(rate(http_request_duration_seconds_bucket{job="kubernetes-pods-annotated",path=~"/healthz|/process"}[5m])) by (le)
+              ) > 0.5
+            for: 5m
+            labels:
+              severity: warning
+              sli: latency
+            annotations:
+              summary: "Data pipeline p95 latency above 500ms"
+              description: "p95 latency over 5m exceeded 500ms."
+
+          # Error-rate SLI: 5xx should remain below 1% over rolling 5 minutes.
+          - alert: DataPipelineErrorRateHigh
+            expr: |
+              (
+                sum(rate(http_requests_total{job="kubernetes-pods-annotated",path=~"/healthz|/process",status=~"5.."}[5m]))
+                /
+                sum(rate(http_requests_total{job="kubernetes-pods-annotated",path=~"/healthz|/process"}[5m]))
+              ) > 0.01
+            for: 5m
+            labels:
+              severity: critical
+              sli: error-rate
+            annotations:
+              summary: "Data pipeline 5xx error rate above 1%"
+              description: "5xx ratio over 5m exceeded 1%."

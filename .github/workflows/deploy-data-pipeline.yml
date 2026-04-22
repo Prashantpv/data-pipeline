@@ -1,0 +1,209 @@
+name: Deploy Data Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/data-pipeline/**"
+      - "deploy/helm/data-pipeline/**"
+      - ".github/workflows/deploy-data-pipeline.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  # Prevent overlapping deployments to the same branch/environment.
+  group: deploy-data-pipeline-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Required repository/org-level variables:
+  # AWS_REGION, ECR_REPOSITORY, EKS_CLUSTER_NAME, K8S_NAMESPACE,
+  # HELM_RELEASE_NAME, K8S_DEPLOYMENT_NAME, K8S_SERVICE_NAME
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}
+  HELM_RELEASE_NAME: ${{ vars.HELM_RELEASE_NAME }}
+  K8S_DEPLOYMENT_NAME: ${{ vars.K8S_DEPLOYMENT_NAME }}
+  K8S_SERVICE_NAME: ${{ vars.K8S_SERVICE_NAME }}
+  HELM_CHART_PATH: deploy/helm/data-pipeline
+  APP_PATH: apps/data-pipeline
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    name: Build, Scan, Push, Deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      # Fetch repository contents.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Validate required runtime inputs early for fast feedback.
+      - name: Validate required variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          required_vars=(
+            AWS_REGION
+            ECR_REPOSITORY
+            EKS_CLUSTER_NAME
+            K8S_NAMESPACE
+            HELM_RELEASE_NAME
+            K8S_DEPLOYMENT_NAME
+            K8S_SERVICE_NAME
+          )
+          for var_name in "${required_vars[@]}"; do
+            if [ -z "${!var_name:-}" ]; then
+              echo "Missing required variable: $var_name" >&2
+              exit 1
+            fi
+          done
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "Missing required secret: AWS_ROLE_ARN" >&2
+            exit 1
+          fi
+
+      # Configure short-lived AWS credentials via GitHub OIDC.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: gha-data-pipeline-deploy
+
+      # Resolve account/registry details once and reuse across steps.
+      - name: Resolve ECR registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> "$GITHUB_ENV"
+          echo "ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "$GITHUB_ENV"
+          echo "ECR_REPOSITORY_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}" >> "$GITHUB_ENV"
+
+      # Ensure the ECR repository exists before push (idempotent behavior).
+      - name: Ensure ECR repository exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "${ECR_REPOSITORY}" >/dev/null
+
+      # Authenticate Docker to Amazon ECR.
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build image from app context and tag with commit SHA.
+      - name: Build Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            -f "${APP_PATH}/Dockerfile" \
+            -t "${ECR_REPOSITORY_URI}:${IMAGE_TAG}" \
+            "${APP_PATH}"
+
+      # Scan the built image and fail on HIGH/CRITICAL vulnerabilities.
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.ECR_REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # Push SHA-tagged image to ECR.
+      - name: Push image to ECR
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "${ECR_REPOSITORY_URI}:${IMAGE_TAG}"
+
+      # Install kubectl to operate against EKS.
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      # Install Helm for chart deployment.
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      # Build kubeconfig from EKS cluster metadata.
+      - name: Configure kubectl for EKS
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig \
+            --name "${EKS_CLUSTER_NAME}" \
+            --region "${AWS_REGION}"
+
+      # Create namespace if absent, then apply chart release idempotently.
+      - name: Helm upgrade/install
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl create namespace "${K8S_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+          helm upgrade --install "${HELM_RELEASE_NAME}" "${HELM_CHART_PATH}" \
+            --namespace "${K8S_NAMESPACE}" \
+            --set image.repository="${ECR_REPOSITORY_URI}" \
+            --set image.tag="${IMAGE_TAG}"
+
+      # Ensure rollout completes; fail fast on unhealthy rollout.
+      - name: Rollout validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "${K8S_NAMESPACE}" rollout status deployment/"${K8S_DEPLOYMENT_NAME}" --timeout=5m
+
+      # Roll back release only when deployment/rollout steps fail.
+      - name: Rollback Helm release on failure
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          history_json="$(helm history "${HELM_RELEASE_NAME}" -n "${K8S_NAMESPACE}" -o json || true)"
+          if [ -z "${history_json}" ] || [ "${history_json}" = "[]" ]; then
+            echo "No release history found; cannot rollback."
+            exit 1
+          fi
+          previous_revision="$(echo "${history_json}" | jq -r '.[-2].revision // empty')"
+          if [ -z "${previous_revision}" ]; then
+            echo "No previous revision available; cannot rollback."
+            exit 1
+          fi
+          helm rollback "${HELM_RELEASE_NAME}" "${previous_revision}" -n "${K8S_NAMESPACE}" --wait --timeout 5m
+
+      # Smoke test service endpoint through port-forward with retries.
+      - name: Smoke test /healthz
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl -n "${K8S_NAMESPACE}" port-forward "service/${K8S_SERVICE_NAME}" 18080:80 >/tmp/port-forward.log 2>&1 &
+          PF_PID=$!
+          trap 'kill "${PF_PID}" >/dev/null 2>&1 || true' EXIT
+          sleep 3
+
+          success=false
+          for attempt in 1 2 3 4 5; do
+            if curl --silent --show-error --fail --max-time 5 http://127.0.0.1:18080/healthz >/dev/null; then
+              success=true
+              echo "Smoke test passed on attempt ${attempt}."
+              break
+            fi
+            echo "Smoke test attempt ${attempt} failed; retrying..."
+            sleep 3
+          done
+
+          if [ "${success}" != "true" ]; then
+            echo "Smoke test failed after 5 attempts."
+            echo "Port-forward logs:"
+            cat /tmp/port-forward.log
+            exit 1
+          fi

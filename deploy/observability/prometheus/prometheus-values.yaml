@@ -1,0 +1,55 @@
+# Lightweight Prometheus configuration for EKS.
+# Intended for prometheus-community/prometheus chart (not kube-prometheus-stack).
+# Example:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm upgrade --install prometheus prometheus-community/prometheus \
+#     -n observability --create-namespace \
+#     -f deploy/observability/prometheus/prometheus-values.yaml
+
+alertmanager:
+  enabled: true
+
+kube-state-metrics:
+  enabled: false
+
+prometheus-node-exporter:
+  enabled: false
+
+server:
+  retention: 7d
+  service:
+    type: ClusterIP
+  # Load SLI alerts from ConfigMap mounted in extraConfigmapMounts.
+  serverFiles:
+    prometheus.yml:
+      rule_files:
+        - /etc/config/recording_and_alerting_rules.yml
+      scrape_configs:
+        - job_name: "kubernetes-pods-annotated"
+          kubernetes_sd_configs:
+            - role: pod
+          relabel_configs:
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+              action: keep
+              regex: "true"
+            - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+              action: replace
+              target_label: __metrics_path__
+              regex: (.+)
+            - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+              action: replace
+              regex: ([^:]+)(?::\d+)?;(\d+)
+              replacement: $1:$2
+              target_label: __address__
+            - source_labels: [__meta_kubernetes_namespace]
+              action: replace
+              target_label: kubernetes_namespace
+            - source_labels: [__meta_kubernetes_pod_name]
+              action: replace
+              target_label: kubernetes_pod_name
+  extraConfigmapMounts:
+    - name: data-pipeline-sli-alerts
+      mountPath: /etc/config/recording_and_alerting_rules.yml
+      subPath: recording_and_alerting_rules.yml
+      configMap: data-pipeline-sli-alerts
+      readOnly: true
