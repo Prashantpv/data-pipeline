@@ -115,6 +115,30 @@ live reload. Rotation ownership should sit with the platform team, while
 application teams consume the secret through stable environment variable names
 instead of secret-version-specific references.
 
+## 6. Separate application deployment workflow from infrastructure validation
+
+Decision:
+I kept one workflow for application delivery and a separate lightweight
+validation workflow for Terraform and Helm.
+
+Why:
+The assignment explicitly asked for a workflow that builds, scans, deploys,
+rolls back, and smoke-tests the application. That requirement is met by the
+deployment workflow. The second workflow does not provision infrastructure; it
+only runs static checks such as `terraform fmt`, `terraform validate`, and
+`helm lint`.
+
+Trade-off:
+This is slightly different from a literal reading of "single workflow", but it
+better reflects production practice. It avoids coupling app deployment to
+plan-only infrastructure validation and avoids implying that VPC/EKS resources
+would be reprovisioned on every push.
+
+Why I accepted it:
+Separating validation from deployment reduces blast radius, keeps feedback
+faster, and makes the intended behavior more explicit for a take-home where the
+Terraform deliverable is plan-only rather than apply-on-merge.
+
 ## AI usage
 
 I used AI assistance for both the sample application and parts of the platform
