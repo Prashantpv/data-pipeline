@@ -149,6 +149,31 @@ helm upgrade --install prometheus prometheus-community/prometheus \
   -f deploy/observability/prometheus/prometheus-values.yaml
 ```
 
+## AI Usage
+
+### Step 0: Application generation
+
+The initial application for this assignment was generated using Cursor.
+
+Prompt summary:
+I asked Cursor to generate a minimal but production-ready containerized data
+pipeline service in Python using FastAPI. The service was required to expose
+`/healthz` and `/process`, use Pydantic validation, structured JSON logging
+with request IDs, graceful error handling, environment-based configuration,
+Prometheus metrics, and a multi-stage non-root Docker image suitable for
+deployment on AWS EKS.
+
+The generated application served as the starting point only. After that, AI was
+used iteratively for infrastructure and deployment scaffolding, including
+Terraform modules for VPC, EKS, and Secrets Manager, GitHub Actions workflow
+design, Helm manifests, Kubernetes security hardening, observability
+configuration, and documentation.
+
+All AI-generated output was reviewed and selectively modified. In particular,
+resource choices were validated, security defaults were tightened, the
+infrastructure was kept modular, and patterns such as hardcoded secrets,
+long-lived AWS credentials, and unnecessary platform complexity were rejected.
+
 ## Security Notes
 
 - EKS API endpoint is private-only by default.
