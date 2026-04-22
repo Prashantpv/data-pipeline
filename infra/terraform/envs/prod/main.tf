@@ -1,5 +1,5 @@
 locals {
-  cluster_name = "${var.project_name}-${var.environment}-eks"
+  cluster_name    = "${var.project_name}-${var.environment}-eks"
   app_secret_name = "${var.project_name}/${var.environment}/data-pipeline/app"
 }
 

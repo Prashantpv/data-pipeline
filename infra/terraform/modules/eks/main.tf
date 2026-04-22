@@ -55,8 +55,8 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 }
 
 resource "aws_eks_cluster" "this" {
-  name     = var.cluster_name
-  role_arn = aws_iam_role.eks_cluster.arn
+  name                      = var.cluster_name
+  role_arn                  = aws_iam_role.eks_cluster.arn
   enabled_cluster_log_types = ["api", "audit", "authenticator"]
 
   vpc_config {
@@ -177,7 +177,7 @@ resource "aws_eks_node_group" "this" {
 
   # These tags are required by Cluster Autoscaler for node group discovery.
   tags = {
-    "k8s.io/cluster-autoscaler/enabled"            = "true"
+    "k8s.io/cluster-autoscaler/enabled"             = "true"
     "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
   }
 
