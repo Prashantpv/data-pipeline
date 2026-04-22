@@ -44,6 +44,16 @@ check "subnets_belong_to_vpc" {
   }
 }
 
+check "node_group_scaling_bounds" {
+  assert {
+    condition = (
+      var.node_group_min_size <= var.node_group_desired_size &&
+      var.node_group_desired_size <= var.node_group_max_size
+    )
+    error_message = "Node group sizes must satisfy min_size <= desired_size <= max_size."
+  }
+}
+
 resource "aws_iam_role" "eks_cluster" {
   name               = "${var.cluster_name}-cluster-role"
   assume_role_policy = data.aws_iam_policy_document.eks_cluster_assume_role.json

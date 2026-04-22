@@ -34,20 +34,10 @@ variable "node_group_desired_size" {
   description = "Desired number of nodes in the managed node group."
   type        = number
   default     = 2
-
-  validation {
-    condition     = var.node_group_desired_size >= var.node_group_min_size
-    error_message = "node_group_desired_size must be greater than or equal to node_group_min_size."
-  }
 }
 
 variable "node_group_max_size" {
   description = "Maximum number of nodes in the managed node group."
   type        = number
   default     = 3
-
-  validation {
-    condition     = var.node_group_max_size >= var.node_group_desired_size
-    error_message = "node_group_max_size must be greater than or equal to node_group_desired_size."
-  }
 }
