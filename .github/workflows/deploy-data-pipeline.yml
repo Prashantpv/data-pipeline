@@ -36,7 +36,10 @@ env:
 jobs:
   deploy:
     name: Build, Scan, Push, Deploy
-    runs-on: ubuntu-latest
+    # This workflow deploys to a private-only EKS control plane, so the runner
+    # must have network access into the VPC. Use a self-hosted runner for the
+    # deploy path instead of a GitHub-hosted runner.
+    runs-on: self-hosted
     environment: production
 
     steps:

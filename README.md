@@ -107,6 +107,8 @@ curl -s http://127.0.0.1:8000/metrics | head
 Set required GitHub configuration:
 
 - Secret: `AWS_ROLE_ARN`
+- Runner: a self-hosted GitHub Actions runner with network access to the VPC
+  that hosts the private EKS API endpoint
 - Repository/org variables:
   - `AWS_REGION`
   - `ECR_REPOSITORY`
@@ -125,6 +127,12 @@ Then push to `main` (or manually run workflow) to:
 - validate rollout
 - rollback on failure
 - run smoke test on `/healthz`
+
+Why self-hosted runner:
+
+The EKS cluster is configured with a private-only API endpoint, so a standard
+GitHub-hosted runner cannot reach the Kubernetes control plane. The deployment
+workflow therefore assumes a self-hosted runner with VPC connectivity.
 
 ### 5) Deploy observability stack
 
@@ -147,7 +155,8 @@ helm upgrade --install prometheus prometheus-community/prometheus \
 
 ## Operational Notes
 
-- If EKS endpoint is private, GitHub-hosted runners usually cannot reach it; use a self-hosted runner with network path to the VPC.
+- The deployment workflow assumes a self-hosted runner because the EKS API endpoint is private-only.
+- GitHub-hosted runners are suitable for repository checks such as Terraform validation and Helm linting, but not for cluster deployment in this setup.
 - Alert rules assume app exposes:
   - `http_requests_total`
   - `http_request_duration_seconds_bucket`
